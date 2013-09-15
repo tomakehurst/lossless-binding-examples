@@ -5,11 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import javassist.*;
 import javassist.bytecode.*;
 import javassist.bytecode.annotation.Annotation;
-import javassist.bytecode.annotation.IntegerMemberValue;
 import org.junit.Before;
 import org.junit.Test;
-
-import java.util.List;
 
 import static net.sf.json.test.JSONAssert.assertJsonEquals;
 
@@ -57,14 +54,14 @@ public class ExampleTest {
     public void fieldPreservationCanBeAddedToImmutableClassViaBytecodeManipulation() throws Exception {
         ClassPool classPool = ClassPool.getDefault();
 
-        CtClass contactDetailsClass = classPool.get(ImmutableContactDetails.class.getName());
-        CtClass losslessContactDetailsClass = classPool.makeClass("com.github.tomakehurst.lossless.examples.LosslessImmutableContactDetails");
-
-
-        losslessContactDetailsClass.setSuperclass(contactDetailsClass);
+        CtClass losslessContactDetailsClass = classPool.get(ImmutableContactDetails.class.getName());
+        losslessContactDetailsClass.setName("com.github.tomakehurst.lossless.examples.LosslessImmutableContactDetails");
+        losslessContactDetailsClass.setSuperclass(classPool.get(ImmutableContactDetails.class.getName()));
+        removeAllFieldsAndMethods(losslessContactDetailsClass);
+        losslessContactDetailsClass.getConstructors()[0].setBody("super($1, $2);");
 
         CtField otherAttributesField = CtField.make(
-                "java.util.Map other;",
+                "java.util.Map other = new java.util.LinkedHashMap();",
                 losslessContactDetailsClass);
         losslessContactDetailsClass.addField(otherAttributesField);
 
@@ -84,23 +81,24 @@ public class ExampleTest {
         addAnnotationWithNoParams(losslessContactDetailsClass, setMethod, "com.fasterxml.jackson.annotation.JsonAnySetter");
         losslessContactDetailsClass.addMethod(setMethod);
 
-        CtConstructor constructor = CtNewConstructor.make(
-                "public LosslessImmutableContactDetails(String homePhone, String email) {\n" +
-                "    super(homePhone, email);\n" +
-                "}",
-                losslessContactDetailsClass);
-        addAnnotationWithNoParams(losslessContactDetailsClass, constructor, "com.fasterxml.jackson.annotation.JsonCreator");
-        ParameterAnnotationsAttribute parameterAttributeInfo = getFirstConstructorParameterAnnotationsAttributeInfo(contactDetailsClass);
-        constructor.getMethodInfo().addAttribute(parameterAttributeInfo);
-        losslessContactDetailsClass.addConstructor(constructor);
-
         losslessContactDetailsClass.debugWriteFile("/Users/tomakehurst/dev/lossless-binding-examples/tmp");
 
         Class<? extends ImmutableContactDetails> modifiedContactDetailsClass = losslessContactDetailsClass.toClass();
 
         ImmutableContactDetails contactDetails = objectMapper.readValue(CONTACT_DETAILS_DOCUMENT, modifiedContactDetailsClass);
         String serialisedContactDetails = objectMapper.writeValueAsString(contactDetails);
+        System.out.println(serialisedContactDetails);
         assertJsonEquals(CONTACT_DETAILS_DOCUMENT, serialisedContactDetails);
+    }
+
+    private void removeAllFieldsAndMethods(CtClass losslessContactDetailsClass) throws NotFoundException {
+        for (CtField field: losslessContactDetailsClass.getDeclaredFields()) {
+            losslessContactDetailsClass.removeField(field);
+        }
+
+        for (CtMethod method: losslessContactDetailsClass.getDeclaredMethods()) {
+            losslessContactDetailsClass.removeMethod(method);
+        }
     }
 
     private void addAnnotationWithNoParams(CtClass ctClass, CtBehavior ctElement, String annotationClass) {
@@ -111,13 +109,30 @@ public class ExampleTest {
         ctElement.getMethodInfo().addAttribute(annotationAttribute);
     }
 
+    private void addConstructorParameterAnnotation(CtConstructor ctConstructor, String annotationClass, String value) {
+
+    }
+
     private ConstPool getConstPool(CtClass ctClass) {
         ClassFile ccFile = ctClass.getClassFile();
         return ccFile.getConstPool();
     }
 
-    private ParameterAnnotationsAttribute getFirstConstructorParameterAnnotationsAttributeInfo(CtClass ctClass) {
+    private ParameterAnnotationsAttribute cloneFirstConstructorParameterAnnotationsAttributeInfo(CtClass ctClass) {
         CtConstructor ctConstructor = ctClass.getConstructors()[0];
-        return (ParameterAnnotationsAttribute) ctConstructor.getMethodInfo().getAttribute(ParameterAnnotationsAttribute.visibleTag);
+        ParameterAnnotationsAttribute originalAnnotationsAttribute = (ParameterAnnotationsAttribute) ctConstructor.getMethodInfo().getAttribute(ParameterAnnotationsAttribute.visibleTag);
+        Annotation[][] sourceAnnotations = originalAnnotationsAttribute.getAnnotations();
+
+        ParameterAnnotationsAttribute targetAnnotationsAttribute = new ParameterAnnotationsAttribute(getConstPool(ctClass), ParameterAnnotationsAttribute.visibleTag);
+        Annotation[][] targetAnnotations = new Annotation[sourceAnnotations.length][sourceAnnotations[0].length];
+        for (int i = 0; i < sourceAnnotations.length; i++) {
+            for (int j = 0; j < sourceAnnotations[0].length; j++) {
+                targetAnnotations[i][j] = sourceAnnotations[i][j];
+            }
+        }
+
+        targetAnnotationsAttribute.setAnnotations(targetAnnotations);
+        return targetAnnotationsAttribute;
+
     }
 }
